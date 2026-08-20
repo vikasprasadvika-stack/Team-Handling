@@ -148,6 +148,7 @@
                     <thead>
                         <tr>
                             <th>Date</th>
+                            <th>Date</th>
                             <th>Time</th>
                             <th>Type</th>
                             <th>Location</th>
@@ -280,50 +281,86 @@
             name: "System Admin"
         };
 
-        let users = {
-            "Admin": DEFAULT_ADMIN
-        };
-
+        let users = { "Admin": DEFAULT_ADMIN };
         let currentUser = null;
 
-        // Staff accounts are shared through Google Apps Script.
-        // LocalStorage is used only as an offline cache.
-        async function loadUsersFromCloud() {
-            // IMPORTANT: Never throw away locally saved staff when the cloud
-            // request returns empty or fails. This keeps staff login working.
-            const cached = JSON.parse(localStorage.getItem('systemUsers') || '{}');
-            const cachedStaff = { ...cached };
-
-            users = { "Admin": DEFAULT_ADMIN, ...cachedStaff };
-
+        function readLocalUsers() {
             try {
-                const response = await fetch(GOOGLE_SCRIPT_URL + "?action=users&ts=" + Date.now(), {
-                    method: "GET",
-                    cache: "no-store"
-                });
-                const cloudUsers = await response.json();
-
-                if (Array.isArray(cloudUsers)) {
-                    cloudUsers.forEach(u => {
-                        if (u && u.username) {
-                            users[String(u.username).trim()] = {
-                                password: String(u.password || ""),
-                                role: String(u.role || "staff"),
-                                name: String(u.name || u.username)
-                            };
-                        }
-                    });
-                    saveUsers();
-                }
-                return true;
-            } catch (err) {
-                console.warn("Cloud users unavailable; using local staff cache.", err);
-                return false;
+                const cached = JSON.parse(localStorage.getItem('systemUsers') || '{}');
+                return (cached && typeof cached === 'object') ? cached : {};
+            } catch (_) {
+                return {};
             }
         }
 
         function saveUsers() {
             localStorage.setItem('systemUsers', JSON.stringify(users));
+        }
+
+        function mergeUsers(cloudUsers) {
+            const local = readLocalUsers();
+            const merged = { ...local };
+
+            if (Array.isArray(cloudUsers)) {
+                cloudUsers.forEach(u => {
+                    if (u && u.username) {
+                        const id = String(u.username).trim();
+                        merged[id] = {
+                            password: String(u.password || ""),
+                            role: String(u.role || "staff"),
+                            name: String(u.name || id)
+                        };
+                    }
+                });
+            }
+
+            users = { "Admin": DEFAULT_ADMIN, ...merged };
+            saveUsers();
+        }
+
+        async function apiGet(params = {}) {
+            const qs = new URLSearchParams({ ...params, ts: Date.now().toString() });
+            const response = await fetch(`${GOOGLE_SCRIPT_URL}?${qs.toString()}`, {
+                method: "GET",
+                cache: "no-store",
+                redirect: "follow"
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const text = await response.text();
+            if (!text) throw new Error("Empty server response");
+            return JSON.parse(text);
+        }
+
+        async function apiPost(payload) {
+            const response = await fetch(GOOGLE_SCRIPT_URL, {
+                method: "POST",
+                redirect: "follow",
+                headers: { "Content-Type": "text/plain;charset=utf-8" },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const text = await response.text();
+            if (!text) throw new Error("Empty server response");
+            return JSON.parse(text);
+        }
+
+        async function loadUsersFromCloud() {
+            try {
+                const cloudUsers = await apiGet({ action: "users" });
+                if (!Array.isArray(cloudUsers)) throw new Error("Invalid users response");
+                mergeUsers(cloudUsers);
+                return true;
+            } catch (err) {
+                console.error("Users fetch failed:", err);
+                users = { "Admin": DEFAULT_ADMIN, ...readLocalUsers() };
+                return false;
+            }
+        }
+
+        async function refreshUsersOnly() {
+            const ok = await loadUsersFromCloud();
+            renderAdminPanel();
+            return ok;
         }
 
         function switchAdminTab(tabName) {
@@ -356,6 +393,7 @@
             submitBtn.disabled = true;
             submitBtn.innerText = "Checking...";
 
+            users = { "Admin": DEFAULT_ADMIN, ...readLocalUsers() };
             await loadUsersFromCloud();
 
             const user = users[usernameInput];
@@ -395,67 +433,53 @@
                 return;
             }
 
-            // Check current cloud data but keep local cache intact.
-            await loadUsersFromCloud();
+            users = { "Admin": DEFAULT_ADMIN, ...readLocalUsers() };
 
-            const existingKey = Object.keys(users).find(
-                key => key.toLowerCase() === username.toLowerCase()
-            );
-            if (existingKey) {
+            if (users[username]) {
                 alert("Yeh Username pehle se maujood hai!");
                 return;
             }
-
-            const staffRecord = {
-                password: password,
-                role: "staff",
-                name: name
-            };
-
-            // SAVE LOCALLY FIRST so the new staff immediately appears
-            // in Registered Staff Directory and can log in on this browser.
-            users[username] = staffRecord;
-            saveUsers();
-            renderAdminPanel();
-
-            this.reset();
 
             const submitBtn = this.querySelector('button[type="submit"]');
             const oldText = submitBtn.innerText;
             submitBtn.disabled = true;
             submitBtn.innerText = "Saving...";
 
-            let cloudSaved = false;
+            const newStaff = {
+                password,
+                role: "staff",
+                name
+            };
+
+            // Save locally first so the new login/directory entry never disappears.
+            users[username] = newStaff;
+            saveUsers();
+            renderAdminPanel();
+
             try {
-                const response = await fetch(GOOGLE_SCRIPT_URL, {
-                    method: "POST",
-                    mode: "cors",
-                    headers: { "Content-Type": "text/plain;charset=utf-8" },
-                    body: JSON.stringify({
-                        action: "addUser",
-                        username: username,
-                        password: password,
-                        role: "staff",
-                        name: name
-                    })
+                const result = await apiPost({
+                    action: "addUser",
+                    username,
+                    password,
+                    role: "staff",
+                    name
                 });
 
-                const result = await response.json();
-                cloudSaved = !!result.ok;
-                if (!cloudSaved) {
-                    console.warn("Cloud addUser failed:", result.error);
-                }
+                if (!result.ok) throw new Error(result.error || "Staff save failed");
+
+                await loadUsersFromCloud();
+                renderAdminPanel();
+                this.reset();
+                alert(`Naya staff '${name}' successfully add ho gaya aur Google Sheet me save ho gaya.`);
             } catch (err) {
-                console.warn("Cloud addUser failed; local staff retained.", err);
+                console.error("Add staff cloud error:", err);
+                renderAdminPanel();
+                this.reset();
+                alert(`Staff '${name}' local system me add ho gaya, lekin Google Sheet sync nahi hua.\n\nGoogle Apps Script code/deployment check karein.`);
             } finally {
                 submitBtn.disabled = false;
                 submitBtn.innerText = oldText;
             }
-
-            alert(
-                `Naya staff '${name}' successfully add ho gaya!` +
-                (cloudSaved ? "" : "\n\nLocal backup bhi save ho gaya hai. Google Sheet sync ke liye Apps Script deployment check karein.")
-            );
         });
 
         async function deleteStaff(username) {
@@ -464,72 +488,45 @@
 
             if (!confirm(`Kya aap '${staff.name}' ko delete karna chahte hain?`)) return;
 
-            // Delete locally first so the directory and login are updated
-            // even when the Google Apps Script request is blocked.
+            const oldUsers = { ...users };
             delete users[username];
             saveUsers();
             renderAdminPanel();
 
-            let cloudDeleted = false;
             try {
-                const response = await fetch(GOOGLE_SCRIPT_URL, {
-                    method: "POST",
-                    mode: "cors",
-                    headers: { "Content-Type": "text/plain;charset=utf-8" },
-                    body: JSON.stringify({
-                        action: "deleteUser",
-                        username: username
-                    })
+                const result = await apiPost({
+                    action: "deleteUser",
+                    username
                 });
 
-                const result = await response.json();
-                cloudDeleted = !!result.ok;
-                if (!cloudDeleted) {
-                    console.warn("Cloud deleteUser failed:", result.error);
-                }
-            } catch (err) {
-                console.warn("Cloud deleteUser failed; local delete retained.", err);
-            }
+                if (!result.ok) throw new Error(result.error || "Delete failed");
 
-            alert(
-                cloudDeleted
-                    ? "Staff delete ho gaya."
-                    : "Staff is device se delete ho gaya. Google Sheet se delete karne ke liye Apps Script deployment/backend check karein."
-            );
+                await loadUsersFromCloud();
+                renderAdminPanel();
+                alert("Staff delete ho gaya aur Google Sheet se bhi remove ho gaya.");
+            } catch (err) {
+                console.error("Delete staff cloud error:", err);
+                users = oldUsers;
+                saveUsers();
+                renderAdminPanel();
+                alert("Google Sheet se staff delete nahi hua. Local change rollback kar diya.");
+            }
         }
 
         async function clearAttendanceHistory() {
-            if (!confirm("Kya aap sach me saari Punch History delete karna chahte hain? Yeh action undo nahi ho sakta.")) {
-                return;
-            }
+            if (!confirm("Kya aap sach me saari Punch History delete karna chahte hain? Yeh action undo nahi ho sakta.")) return;
 
-            // Clear browser history immediately.
-            localStorage.removeItem('attendanceLogs');
-            renderAdminPanel();
-
-            let cloudCleared = false;
             try {
-                const response = await fetch(GOOGLE_SCRIPT_URL, {
-                    method: "POST",
-                    mode: "cors",
-                    headers: { "Content-Type": "text/plain;charset=utf-8" },
-                    body: JSON.stringify({ action: "clearAttendance" })
-                });
+                const result = await apiPost({ action: "clearAttendance" });
+                if (!result.ok) throw new Error(result.error || "Clear history failed");
 
-                const result = await response.json();
-                cloudCleared = !!result.ok;
-                if (!cloudCleared) {
-                    console.warn("Cloud clearAttendance failed:", result.error);
-                }
+                localStorage.removeItem('attendanceLogs');
+                renderAdminPanel();
+                alert("Saari attendance history Google Sheet aur local system dono se delete kar di gayi.");
             } catch (err) {
-                console.warn("Cloud clearAttendance failed; local history already cleared.", err);
+                console.error("Clear history error:", err);
+                alert("History Google Sheet se delete nahi hui. Google Apps Script code/deployment check karein.");
             }
-
-            alert(
-                cloudCleared
-                    ? "Saari attendance history delete kar di gayi hai!"
-                    : "Is device ki attendance history delete ho gayi hai. Google Sheet ki history clear karne ke liye Apps Script deployment/backend check karein."
-            );
         }
 
         // FETCH LIVE DATA FROM GOOGLE SHEET FOR ADMIN PANEL
@@ -538,20 +535,19 @@
             attTbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Fetching Live Data from Google Sheet...</td></tr>';
 
             try {
-                const response = await fetch(GOOGLE_SCRIPT_URL);
-                const records = await response.json();
+                const records = await apiGet({ action: "attendance" });
+                if (!Array.isArray(records)) throw new Error("Invalid attendance response");
 
-                if (Array.isArray(records)) {
-                    // A successful empty cloud response is a real empty history.
-                    localStorage.setItem('attendanceLogs', JSON.stringify(records));
-                    renderAdminLogsTable(records);
-                } else {
-                    const localRecords = JSON.parse(localStorage.getItem('attendanceLogs')) || [];
-                    renderAdminLogsTable(localRecords);
-                }
+                localStorage.setItem('attendanceLogs', JSON.stringify(records));
+                renderAdminLogsTable(records);
             } catch (err) {
-                const localRecords = JSON.parse(localStorage.getItem('attendanceLogs')) || [];
+                console.error("Attendance fetch failed:", err);
+                const localRecords = JSON.parse(localStorage.getItem('attendanceLogs') || '[]');
                 renderAdminLogsTable(localRecords);
+                attTbody.insertAdjacentHTML('afterbegin',
+                    `<tr><td colspan="5" style="text-align:center;color:#dc2626;font-weight:600;">
+                    Google Sheet fetch failed — showing local backup.
+                    </td></tr>`);
             }
         }
 
@@ -700,8 +696,8 @@
                 const locationUrl = `https://www.google.com/maps?q=${lat},${lon}`;
 
                 const now = new Date();
-                const currentDate = now.toLocaleDateString();
-                const currentTime = now.toLocaleTimeString();
+                const currentDate = now.toLocaleDateString('en-IN');
+                const currentTime = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
                 const logPayload = {
                     userId: currentUser.id,
@@ -790,6 +786,29 @@
                 staffTbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color: var(--text-muted);">Koi staff registered nahi hai.</td></tr>`;
             }
 
+            // Always refresh the cloud staff directory separately.
+            loadUsersFromCloud().then(() => {
+                const body = document.getElementById('staffListTableBody');
+                if (body) {
+                    body.innerHTML = '';
+                    let count = 0;
+                    Object.keys(users).forEach(u => {
+                        if (users[u].role === 'staff') {
+                            count++;
+                            const tr = document.createElement('tr');
+                            tr.innerHTML = `
+                                <td><strong>${users[u].name}</strong></td>
+                                <td><code>${u}</code></td>
+                                <td><code>${users[u].password}</code></td>
+                                <td><button onclick="deleteStaff('${u.replace(/'/g, "\\'")}')" class="btn btn-danger btn-sm">Delete</button></td>
+                            `;
+                            body.appendChild(tr);
+                        }
+                    });
+                    if (!count) body.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-muted);">Koi staff registered nahi hai.</td></tr>`;
+                }
+            });
+
             fetchAdminLogsFromGoogleSheet();
         }
 
@@ -837,6 +856,7 @@
             document.getElementById('loginCard').classList.remove('hidden');
         }
 
+        users = { "Admin": DEFAULT_ADMIN, ...readLocalUsers() };
         saveUsers();
         loadUsersFromCloud();
     </script>
