@@ -460,7 +460,7 @@
             const btnText = document.getElementById('btnText');
             const btnIcon = document.getElementById('btnIcon');
             
-            let userLogs = records.filter(r => r.userId === currentUser.id);
+            let userLogs = records ? records.filter(r => r.userId === currentUser.id) : [];
             let lastLog = userLogs.length > 0 ? userLogs[userLogs.length - 1] : null;
 
             if (!lastLog || String(lastLog.type).toUpperCase().includes('OUT')) {
@@ -477,10 +477,13 @@
 
         async function handlePunchToggle() {
             let cloudData = await fetchSystemData();
-            let userLogs = cloudData ? cloudData.attendance.filter(r => r.userId === currentUser.id) : [];
+            let userLogs = cloudData && cloudData.attendance ? cloudData.attendance.filter(r => r.userId === currentUser.id) : [];
             let lastLog = userLogs.length > 0 ? userLogs[userLogs.length - 1] : null;
 
-            let nextType = (!lastLog || String(lastLog.type).toUpperCase().includes('OUT')) ? 'IN' : 'OUT';
+            let nextType = 'IN';
+            if (lastLog && String(lastLog.type).toUpperCase().includes('IN')) {
+                nextType = 'OUT';
+            }
             markAttendance(nextType);
         }
 
