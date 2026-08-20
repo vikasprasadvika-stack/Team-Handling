@@ -39,7 +39,6 @@
         .btn-primary { background: var(--accent); color: white; width: 100%; }
         .btn-primary:hover { background: var(--accent-hover); }
         .btn-excel { background: #15803d; color: white; }
-        .btn-danger-solid { background: var(--danger); color: white; }
         .btn-success { background: var(--success); color: white; }
         .btn-sm { padding: 6px 12px; font-size: 12px; }
         .btn-logout { background: #f1f5f9; color: var(--text-muted); float: right; border: 1px solid var(--border-color); }
@@ -244,7 +243,7 @@
     </div>
 
     <script>
-        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyV_eecO8xtiAey_pQh_QOMRp5KsoN2zNpKhm0hwkUNZnJdJUw_7xo5vC7s3SJkYew3lg/exec"; // <-- Apna Web App URL yahan paste karein
+        const GOOGLE_SCRIPT_URL = "YAHAN_APNA_GOOGLE_APPS_SCRIPT_WEB_APP_URL_DAALEIN"; // <-- Yahan apna Web App URL dalein
 
         let currentUser = null;
 
@@ -332,7 +331,6 @@
             const username = document.getElementById('newStaffUser').value.trim();
             const password = document.getElementById('newStaffPass').value.trim();
 
-            // Pehle check karo ki user already exist toh nahi karta
             let cloudData = await fetchSystemData();
             if (cloudData && cloudData.staffs && cloudData.staffs[username]) {
                 alert("Yeh Username pehle se maujood hai! Dusra username chunein.");
@@ -359,9 +357,9 @@
                     body: JSON.stringify(payload)
                 });
                 
-                alert(`Naya staff '${name}' successfully register ho gaya! Ab wo turant login kar sakte hain.`);
+                alert(`Naya staff '${name}' successfully register ho gaya! Ab wo login kar sakte hain.`);
                 document.getElementById('addStaffForm').reset();
-                fetchAllCloudData();
+                setTimeout(() => { fetchAllCloudData(); }, 1500);
             } catch (err) {
                 alert("Registration failed!");
             } finally {
