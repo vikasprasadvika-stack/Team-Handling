@@ -279,14 +279,24 @@
             "staff1": { password: "123", role: "staff", name: "Demo Staff" }
         };
 
-        // Load users from localStorage or fallback to defaults, making sure saved users are fully loaded
-        let storedUsers = JSON.parse(localStorage.getItem('systemUsers'));
-        let users = storedUsers ? { ...defaultUsers, ...storedUsers } : defaultUsers;
+        // Initialize and ensure default users + local storage users merge correctly
+        function getSystemUsers() {
+            let stored = JSON.parse(localStorage.getItem('systemUsers'));
+            if (!stored) {
+                localStorage.setItem('systemUsers', JSON.stringify(defaultUsers));
+                return defaultUsers;
+            }
+            // Ensure Admin always exists
+            if (!stored["Admin"]) {
+                stored["Admin"] = defaultUsers["Admin"];
+            }
+            return stored;
+        }
 
         let currentUser = null;
 
-        function saveUsers() {
-            localStorage.setItem('systemUsers', JSON.stringify(users));
+        function saveUsers(usersObj) {
+            localStorage.setItem('systemUsers', JSON.stringify(usersObj));
         }
 
         function switchAdminTab(tabName) {
@@ -313,9 +323,8 @@
             const usernameInput = document.getElementById('username').value.trim();
             const passwordInput = document.getElementById('password').value.trim();
 
-            // Refresh users list from storage before checking login to ensure newly added staff works immediately
-            let currentLiveUsers = JSON.parse(localStorage.getItem('systemUsers')) || users;
-            const user = currentLiveUsers[usernameInput];
+            let users = getSystemUsers();
+            const user = users[usernameInput];
 
             if (user && user.password === passwordInput) {
                 currentUser = { id: usernameInput, ...user };
@@ -342,8 +351,7 @@
             const username = document.getElementById('newStaffUser').value.trim();
             const password = document.getElementById('newStaffPass').value.trim();
 
-            // Reload users from local storage to prevent overwriting with stale cache
-            users = JSON.parse(localStorage.getItem('systemUsers')) || users;
+            let users = getSystemUsers();
 
             if (users[username]) {
                 alert("Yeh Username pehle se maujood hai!");
@@ -351,7 +359,7 @@
             }
 
             users[username] = { password: password, role: "staff", name: name };
-            saveUsers();
+            saveUsers(users);
             
             alert(`Naya staff '${name}' successfully add ho gaya!`);
             document.getElementById('addStaffForm').reset();
@@ -359,10 +367,10 @@
         });
 
         function deleteStaff(username) {
-            users = JSON.parse(localStorage.getItem('systemUsers')) || users;
+            let users = getSystemUsers();
             if (confirm(`Kya aap '${users[username].name}' ko delete karna chahte hain?`)) {
                 delete users[username];
-                saveUsers();
+                saveUsers(users);
                 renderAdminPanel();
             }
         }
@@ -426,7 +434,6 @@
             });
         }
 
-        // FIXED METRICS FUNCTION TO CORRECTLY COUNT IN & OUT LOGS
         function updateMetrics(recordsData) {
             const records = recordsData || JSON.parse(localStorage.getItem('attendanceLogs')) || [];
 
@@ -532,7 +539,7 @@
                 return;
             }
 
-            const geoOptions = { enableHighAccuracy: true, timeout: 20, maximumAge: 0 };
+            const geoOptions = { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 };
 
             navigator.geolocation.getCurrentPosition(async (position) => {
                 const lat = position.coords.latitude;
@@ -559,7 +566,6 @@
                 records.push(logPayload);
                 localStorage.setItem('attendanceLogs', JSON.stringify(records));
 
-                // LIVE SYNC TO GOOGLE SHEETS
                 try {
                     await fetch(GOOGLE_SCRIPT_URL, {
                         method: 'POST',
@@ -610,7 +616,7 @@
         }
 
         function renderAdminPanel() {
-            users = JSON.parse(localStorage.getItem('systemUsers')) || users;
+            let users = getSystemUsers();
             const staffTbody = document.getElementById('staffListTableBody');
             staffTbody.innerHTML = '';
             
@@ -680,9 +686,8 @@
             document.getElementById('loginCard').classList.remove('hidden');
         }
 
-        if(!localStorage.getItem('systemUsers')) {
-            saveUsers();
-        }
+        // Run initial check
+        getSystemUsers();
     </script>
 </body>
 </html>
