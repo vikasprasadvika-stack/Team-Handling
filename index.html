@@ -147,6 +147,7 @@
                 <table>
                     <thead>
                         <tr>
+                            <th>Date</th>
                             <th>Time</th>
                             <th>Type</th>
                             <th>Location</th>
@@ -210,7 +211,8 @@
                     <table>
                         <thead>
                             <tr>
-                                <th>Date & Time</th>
+                                <th>Date</th>
+                                <th>Time</th>
                                 <th>Staff Name</th>
                                 <th>Action</th>
                                 <th>Address & Location</th>
@@ -277,14 +279,9 @@
             "staff1": { password: "123", role: "staff", name: "Demo Staff" }
         };
 
-        let users = JSON.parse(localStorage.getItem('systemUsers')) || defaultUsers;
-
-        if (users["admin"] || users["Daman"] || !users["Admin"]) {
-            delete users["admin"];
-            delete users["Daman"];
-            users["Admin"] = { password: "Daman@11", role: "admin", name: "System Admin" };
-            localStorage.setItem('systemUsers', JSON.stringify(users));
-        }
+        // Load users from localStorage or fallback to defaults, making sure saved users are fully loaded
+        let storedUsers = JSON.parse(localStorage.getItem('systemUsers'));
+        let users = storedUsers ? { ...defaultUsers, ...storedUsers } : defaultUsers;
 
         let currentUser = null;
 
@@ -316,7 +313,9 @@
             const usernameInput = document.getElementById('username').value.trim();
             const passwordInput = document.getElementById('password').value.trim();
 
-            const user = users[usernameInput];
+            // Refresh users list from storage before checking login to ensure newly added staff works immediately
+            let currentLiveUsers = JSON.parse(localStorage.getItem('systemUsers')) || users;
+            const user = currentLiveUsers[usernameInput];
 
             if (user && user.password === passwordInput) {
                 currentUser = { id: usernameInput, ...user };
@@ -343,6 +342,9 @@
             const username = document.getElementById('newStaffUser').value.trim();
             const password = document.getElementById('newStaffPass').value.trim();
 
+            // Reload users from local storage to prevent overwriting with stale cache
+            users = JSON.parse(localStorage.getItem('systemUsers')) || users;
+
             if (users[username]) {
                 alert("Yeh Username pehle se maujood hai!");
                 return;
@@ -357,6 +359,7 @@
         });
 
         function deleteStaff(username) {
+            users = JSON.parse(localStorage.getItem('systemUsers')) || users;
             if (confirm(`Kya aap '${users[username].name}' ko delete karna chahte hain?`)) {
                 delete users[username];
                 saveUsers();
@@ -375,7 +378,7 @@
         // FETCH LIVE DATA FROM GOOGLE SHEET FOR ADMIN PANEL
         async function fetchAdminLogsFromGoogleSheet() {
             const attTbody = document.getElementById('attendanceTableBody');
-            attTbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">Fetching Live Data from Google Sheet...</td></tr>';
+            attTbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Fetching Live Data from Google Sheet...</td></tr>';
 
             try {
                 const response = await fetch(GOOGLE_SCRIPT_URL);
@@ -401,7 +404,7 @@
             updateMetrics(records);
 
             if (!records || records.length === 0) {
-                attTbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color: var(--text-muted);">Koi attendance records available nahi hain.</td></tr>`;
+                attTbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color: var(--text-muted);">Koi attendance records available nahi hain.</td></tr>`;
                 return;
             }
 
@@ -410,7 +413,8 @@
                 const isIN = typeText.includes('IN');
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td>${rec.date || ''} ${rec.time || ''}</td>
+                    <td>${rec.date || ''}</td>
+                    <td>${rec.time || ''}</td>
                     <td><strong>${rec.name || ''}</strong></td>
                     <td class="${isIN ? 'punch-type-in' : 'punch-type-out'}">PUNCH ${isIN ? 'IN' : 'OUT'}</td>
                     <td>
@@ -528,7 +532,7 @@
                 return;
             }
 
-            const geoOptions = { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 };
+            const geoOptions = { enableHighAccuracy: true, timeout: 20, maximumAge: 0 };
 
             navigator.geolocation.getCurrentPosition(async (position) => {
                 const lat = position.coords.latitude;
@@ -588,7 +592,7 @@
             const userLogs = records.filter(r => r.userId === currentUser.id).reverse();
 
             if (userLogs.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color: var(--text-muted);">Koi punch record nahi hai.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color: var(--text-muted);">Koi punch record nahi hai.</td></tr>`;
                 return;
             }
 
@@ -596,7 +600,8 @@
                 const isIN = String(rec.type).toUpperCase().includes('IN');
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td>${rec.date} ${rec.time}</td>
+                    <td>${rec.date || ''}</td>
+                    <td>${rec.time || ''}</td>
                     <td class="${isIN ? 'punch-type-in' : 'punch-type-out'}">${isIN ? 'IN' : 'OUT'}</td>
                     <td><span class="address-text">📍 ${rec.address}</span></td>
                 `;
@@ -605,6 +610,7 @@
         }
 
         function renderAdminPanel() {
+            users = JSON.parse(localStorage.getItem('systemUsers')) || users;
             const staffTbody = document.getElementById('staffListTableBody');
             staffTbody.innerHTML = '';
             
