@@ -63,7 +63,7 @@
         .btn-circle-out:hover { box-shadow: 0 12px 25px rgba(220, 38, 38, 0.4); transform: translateY(-2px); }
         .btn-circle-icon { font-size: 26px; margin-bottom: 2px; }
 
-        /* SYSTEMATIC ADMIN STRUCTURE */
+        /* ADMIN STRUCTURE */
         .admin-header-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
         .admin-title-text h2 { font-size: 20px; color: var(--primary); font-weight: 700; text-align: left; }
         .admin-title-text p { font-size: 13px; color: var(--text-muted); }
@@ -202,7 +202,7 @@
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
                     <div class="panel-block-title" style="margin-bottom: 0; border: none; padding: 0;">Attendance Logs History</div>
                     <div style="display: flex; gap: 8px;">
-                        <button onclick="fetchAdminLogsFromGoogleSheet()" class="btn btn-primary btn-sm">🔄 Refresh Data</button>
+                        <button onclick="fetchAllCloudData()" class="btn btn-primary btn-sm">🔄 Refresh Data</button>
                         <button onclick="exportToCSV()" class="btn btn-excel btn-sm">📥 Export CSV</button>
                         <button onclick="clearAttendanceHistory()" class="btn btn-danger-solid btn-sm">🗑️ Clear History</button>
                     </div>
@@ -272,31 +272,31 @@
     </div>
 
     <script>
-        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwzCwYqNsih6767ILouLjvOL_jJuYdYrulkm97UPiDMTwpapuF-vVH2MiEG4FghKB0qGQ/exec";
+        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw944x4a4y1iVaW5Yeg0Y1m9C0lJ5CGnlgBOIwekl6e9jtp5yFy56EvTvX8GIJGdKtjfw/exec";
 
         let defaultUsers = {
             "Admin": { password: "Daman@11", role: "admin", name: "System Admin" },
             "staff1": { password: "123", role: "staff", name: "Demo Staff" }
         };
 
-        // Initialize and ensure default users + local storage users merge correctly
-        function getSystemUsers() {
-            let stored = JSON.parse(localStorage.getItem('systemUsers'));
-            if (!stored) {
-                localStorage.setItem('systemUsers', JSON.stringify(defaultUsers));
-                return defaultUsers;
-            }
-            // Ensure Admin always exists
-            if (!stored["Admin"]) {
-                stored["Admin"] = defaultUsers["Admin"];
-            }
-            return stored;
-        }
-
         let currentUser = null;
 
-        function saveUsers(usersObj) {
-            localStorage.setItem('systemUsers', JSON.stringify(usersObj));
+        // Get users combined with cloud database
+        async function getSystemUsers() {
+            try {
+                let response = await fetch(GOOGLE_SCRIPT_URL);
+                let data = await response.json();
+                if (data && data.staffs) {
+                    // Combine default admin + cloud staff list
+                    let combined = { "Admin": defaultUsers["Admin"], ...data.staffs };
+                    localStorage.setItem('cachedStaffs', JSON.stringify(combined));
+                    return combined;
+                }
+            } catch (err) {
+                console.log("Using cached staff list due to network issue");
+            }
+            let cached = JSON.parse(localStorage.getItem('cachedStaffs'));
+            return cached || defaultUsers;
         }
 
         function switchAdminTab(tabName) {
@@ -318,12 +318,12 @@
             }
         }
 
-        document.getElementById('loginForm').addEventListener('submit', function(e) {
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             const usernameInput = document.getElementById('username').value.trim();
             const passwordInput = document.getElementById('password').value.trim();
 
-            let users = getSystemUsers();
+            let users = await getSystemUsers();
             const user = users[usernameInput];
 
             if (user && user.password === passwordInput) {
@@ -345,59 +345,68 @@
             }
         });
 
-        document.getElementById('addStaffForm').addEventListener('submit', function(e) {
+        document.getElementById('addStaffForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             const name = document.getElementById('newStaffName').value.trim();
             const username = document.getElementById('newStaffUser').value.trim();
             const password = document.getElementById('newStaffPass').value.trim();
 
-            let users = getSystemUsers();
+            let users = await getSystemUsers();
 
             if (users[username]) {
                 alert("Yeh Username pehle se maujood hai!");
                 return;
             }
 
-            users[username] = { password: password, role: "staff", name: name };
-            saveUsers(users);
-            
-            alert(`Naya staff '${name}' successfully add ho gaya!`);
-            document.getElementById('addStaffForm').reset();
-            renderAdminPanel();
+            const payload = {
+                action: 'registerStaff',
+                username: username,
+                password: password,
+                name: name,
+                role: 'staff'
+            };
+
+            try {
+                await fetch(GOOGLE_SCRIPT_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                alert(`Naya staff '${name}' successfully cloud par register ho gaya! Ab wo kisi bhi mobile se login kar sakte hain.`);
+                document.getElementById('addStaffForm').reset();
+                renderAdminPanel();
+            } catch (err) {
+                alert("Registration failed! Please check connection.");
+            }
         });
 
-        function deleteStaff(username) {
-            let users = getSystemUsers();
-            if (confirm(`Kya aap '${users[username].name}' ko delete karna chahte hain?`)) {
-                delete users[username];
-                saveUsers(users);
-                renderAdminPanel();
-            }
-        }
-
         function clearAttendanceHistory() {
-            if (confirm("Kya aap sach me saari Punch History delete karna chahte hain? Yeh action undo nahi ho sakta.")) {
+            if (confirm("Kya aap sach me saari Punch History delete karna chahte hain?")) {
                 localStorage.removeItem('attendanceLogs');
                 renderAdminPanel();
-                alert("Saari attendance history delete kar di gayi hai!");
+                alert("Saari attendance history local view se hata di gayi hai!");
             }
         }
 
-        // FETCH LIVE DATA FROM GOOGLE SHEET FOR ADMIN PANEL
-        async function fetchAdminLogsFromGoogleSheet() {
+        // FETCH ALL DATA FROM GOOGLE SHEET
+        async function fetchAllCloudData() {
             const attTbody = document.getElementById('attendanceTableBody');
             attTbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Fetching Live Data from Google Sheet...</td></tr>';
 
             try {
                 const response = await fetch(GOOGLE_SCRIPT_URL);
-                const records = await response.json();
+                const data = await response.json();
 
-                if (records && records.length > 0) {
-                    localStorage.setItem('attendanceLogs', JSON.stringify(records));
-                    renderAdminLogsTable(records);
-                } else {
-                    const localRecords = JSON.parse(localStorage.getItem('attendanceLogs')) || [];
-                    renderAdminLogsTable(localRecords);
+                if (data && data.attendance) {
+                    localStorage.setItem('attendanceLogs', JSON.stringify(data.attendance));
+                    renderAdminLogsTable(data.attendance);
+                }
+                if (data && data.staffs) {
+                    let combined = { "Admin": defaultUsers["Admin"], ...data.staffs };
+                    localStorage.setItem('cachedStaffs', JSON.stringify(combined));
+                    renderStaffDirectory(combined);
                 }
             } catch (err) {
                 const localRecords = JSON.parse(localStorage.getItem('attendanceLogs')) || [];
@@ -456,13 +465,9 @@
                 if (type === 'OUT') punchOutTodayCount++;
             });
 
-            const inElem = document.getElementById('metricPunchInCount');
-            const outElem = document.getElementById('metricPunchOutCount');
-            const logsElem = document.getElementById('metricLogsCount');
-
-            if (inElem) inElem.innerText = punchInTodayCount;
-            if (outElem) outElem.innerText = punchOutTodayCount;
-            if (logsElem) logsElem.innerText = records.length;
+            document.getElementById('metricPunchInCount').innerText = punchInTodayCount;
+            document.getElementById('metricPunchOutCount').innerText = punchOutTodayCount;
+            document.getElementById('metricLogsCount').innerText = records.length;
         }
 
         function getLastPunchState() {
@@ -506,8 +511,8 @@
 
                 if (data && data.address) {
                     const addr = data.address;
-                    const city = addr.city || addr.town || addr.village || addr.county || addr.state_district || "";
-                    const suburb = addr.suburb || addr.neighbourhood || addr.residential || "";
+                    const city = addr.city || addr.town || addr.village || addr.county || "";
+                    const suburb = addr.suburb || addr.neighbourhood || "";
                     const road = addr.road || "";
                     const state = addr.state || "";
 
@@ -533,13 +538,11 @@
             statusDiv.style.color = "var(--accent)";
 
             if (!navigator.geolocation) {
-                statusDiv.innerText = "Geolocation support is not available on this device.";
+                statusDiv.innerText = "Geolocation support is not available.";
                 statusDiv.style.color = "var(--danger)";
                 btn.disabled = false;
                 return;
             }
-
-            const geoOptions = { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 };
 
             navigator.geolocation.getCurrentPosition(async (position) => {
                 const lat = position.coords.latitude;
@@ -587,7 +590,7 @@
                 statusDiv.innerText = "Location Error: Please turn on mobile GPS.";
                 statusDiv.style.color = "var(--danger)";
                 btn.disabled = false;
-            }, geoOptions);
+            }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
         }
 
         function renderStaffPersonalLogs() {
@@ -615,8 +618,7 @@
             });
         }
 
-        function renderAdminPanel() {
-            let users = getSystemUsers();
+        function renderStaffDirectory(users) {
             const staffTbody = document.getElementById('staffListTableBody');
             staffTbody.innerHTML = '';
             
@@ -629,7 +631,7 @@
                         <td><strong>${users[u].name}</strong></td>
                         <td><code>${u}</code></td>
                         <td><code>${users[u].password}</code></td>
-                        <td><button onclick="deleteStaff('${u}')" class="btn btn-danger btn-sm">Delete</button></td>
+                        <td><span style="font-size:12px; color:var(--success); font-weight:600;">Active in Cloud</span></td>
                     `;
                     staffTbody.appendChild(tr);
                 }
@@ -638,8 +640,12 @@
             if(staffCount === 0) {
                 staffTbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color: var(--text-muted);">Koi staff registered nahi hai.</td></tr>`;
             }
+        }
 
-            fetchAdminLogsFromGoogleSheet();
+        async function renderAdminPanel() {
+            let users = await getSystemUsers();
+            renderStaffDirectory(users);
+            fetchAllCloudData();
         }
 
         function exportToCSV() {
@@ -685,9 +691,6 @@
             document.getElementById('adminDashboard').classList.add('hidden');
             document.getElementById('loginCard').classList.remove('hidden');
         }
-
-        // Run initial check
-        getSystemUsers();
     </script>
 </body>
 </html>
